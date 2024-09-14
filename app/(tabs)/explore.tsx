@@ -1,102 +1,276 @@
-import Ionicons from '@expo/vector-icons/Ionicons';
-import { StyleSheet, Image, Platform } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Text,
+  StyleSheet,
+  View,
+  ScrollView,
+  SafeAreaView,
+  Dimensions,
+  TouchableOpacity,
+} from "react-native";
+import { Audio, AVPlaybackStatus } from "expo-av";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  runOnJS,
+  withTiming,
+} from "react-native-reanimated";
+import { Ionicons } from "@expo/vector-icons";
+import { transcription } from "@/lib/transcription";
+import Waveform from "@/components/WaveForm";
+import AudioWaveform from "@/components/AudioWaveform";
 
-import { Collapsible } from '@/components/Collapsible';
-import { ExternalLink } from '@/components/ExternalLink';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
+interface WordType {
+  end: number;
+  word: string;
+  start: number;
+  probability?: number;
+}
+interface WordProps {
+  word: WordType;
+  isHighlighted: boolean;
+}
+
+const Word: React.FC<WordProps> = React.memo(({ word, isHighlighted }) => (
+  <Text style={[styles.word, isHighlighted && styles.highlightedWord]}>
+    {word.word}
+  </Text>
+));
+
+const SEEK_INTERVAL = 10;
+const audioSource =
+  "https://firebasestorage.googleapis.com/v0/b/transcrybe-fe4cb.appspot.com/o/videos%2F00b680ed-e60b-4af8-aaf7-4cc8c34d7b48.mp4?alt=media&token=98b2936e-9014-4348-9562-85d20dd39d4a";
 
 export default function TabTwoScreen() {
+  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTimeState, setCurrentTimeState] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollY = useSharedValue(0);
+  const [contentHeight, setContentHeight] = useState(0);
+
+  // Determine the start time of the first transcription item
+  const transcriptionStartTime = transcription[0]?.start || 0;
+
+  useEffect(() => {
+    async function loadAudio() {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: audioSource },
+        { shouldPlay: false },
+        onPlaybackStatusUpdate
+      );
+      setSound(sound);
+    }
+
+    loadAudio();
+
+    return () => {
+      if (sound) {
+        sound.unloadAsync();
+      }
+    };
+  }, []);
+
+  const onPlaybackStatusUpdate = (status: AVPlaybackStatus) => {
+    if (status.isLoaded) {
+      setCurrentTimeState(status.positionMillis / 1000);
+      setIsPlaying(status.isPlaying);
+      if (status.durationMillis) {
+        setDuration(status.durationMillis / 1000);
+      }
+    }
+  };
+
+  const onPlayPausePress = useCallback(async () => {
+    if (sound) {
+      if (isPlaying) {
+        await sound.pauseAsync();
+      } else {
+        await sound.playAsync();
+      }
+    }
+  }, [isPlaying, sound]);
+
+  const seekAudio = useCallback(
+    async (direction: "forward" | "backward") => {
+      if (sound) {
+        const status = await sound.getStatusAsync();
+        if (status.isLoaded) {
+          const delta =
+            direction === "forward"
+              ? SEEK_INTERVAL * 1000
+              : -SEEK_INTERVAL * 1000;
+          let newPosition = status.positionMillis + delta;
+          newPosition = Math.max(
+            0,
+            Math.min(newPosition, status.durationMillis || 0)
+          );
+          await sound.setPositionAsync(newPosition);
+        }
+      }
+    },
+    [sound]
+  );
+
+  useEffect(() => {
+    if (duration && contentHeight > 300) {
+      const maxScroll = contentHeight - 300;
+      const scrollPosition = (currentTimeState / duration) * maxScroll;
+      scrollY.value = withTiming(scrollPosition, { duration: 100 });
+    }
+  }, [currentTimeState, duration, contentHeight]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ translateY: -scrollY.value }],
+    };
+  });
+
+  const renderTranscription = useCallback(() => {
+    return transcription.map((item, index) => (
+      <View key={index} style={styles.transcriptionItem}>
+        <Text style={styles.speaker}>{item.speaker}</Text>
+        <View style={styles.wordsContainer}>
+          {item.words.map((word, wordIndex) => (
+            <Word
+              key={wordIndex}
+              word={word}
+              isHighlighted={
+                currentTimeState >= word.start && currentTimeState <= word.end
+              }
+            />
+          ))}
+        </View>
+      </View>
+    ));
+  }, [currentTimeState]);
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={<Ionicons size={310} name="code-slash" style={styles.headerImage} />}>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Explore</ThemedText>
-      </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image source={require('@/assets/images/react-logo.png')} style={{ alignSelf: 'center' }} />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Custom fonts">
-        <ThemedText>
-          Open <ThemedText type="defaultSemiBold">app/_layout.tsx</ThemedText> to see how to load{' '}
-          <ThemedText style={{ fontFamily: 'SpaceMono' }}>
-            custom fonts such as this one.
-          </ThemedText>
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/versions/latest/sdk/font">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user's current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful <ThemedText type="defaultSemiBold">react-native-reanimated</ThemedText> library
-          to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
-            </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.contentContainer}>
+        <View style={styles.audioPlayerContainer}>
+          <Waveform
+            width={200}
+            height={100}
+            color="#ff6b6b"
+            isPlaying={isPlaying && currentTimeState >= transcriptionStartTime}
+          />
+        </View>
+        <View style={styles.controlsContainer}>
+          <TouchableOpacity
+            onPress={() => seekAudio("backward")}
+            style={styles.controlButton}
+          >
+            <Ionicons name="play-back" size={24} color="black" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={onPlayPausePress}
+            style={styles.controlButton}
+          >
+            <Ionicons
+              name={isPlaying ? "pause" : "play"}
+              size={24}
+              color="black"
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => seekAudio("forward")}
+            style={styles.controlButton}
+          >
+            <Ionicons name="play-forward" size={24} color="black" />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.transcriptionContainer}>
+          <ScrollView
+            ref={scrollViewRef}
+            style={styles.scrollView}
+            scrollEnabled={false}
+          >
+            <Animated.View
+              style={[styles.animatedContent, animatedStyle]}
+              onLayout={(event) =>
+                setContentHeight(event.nativeEvent.layout.height)
+              }
+            >
+              {renderTranscription()}
+            </Animated.View>
+          </ScrollView>
+        </View>
+      </View>
+    </SafeAreaView>
   );
 }
 
+const { width } = Dimensions.get("window");
+
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  container: {
+    flex: 1,
   },
-  titleContainer: {
-    flexDirection: 'row',
-    gap: 8,
+  audioPlayerContainer: {
+    width: width - 20,
+    height: 160,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 10,
+    backgroundColor: "#FEE1BA",
+    borderRadius: 20,
+  },
+  contentContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 10,
+  },
+  video: {
+    width: width - 20,
+    aspectRatio: 16 / 9,
+  },
+  controlsContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 10,
+  },
+  controlButton: {
+    marginHorizontal: 20,
+  },
+  transcriptionContainer: {
+    width: "100%",
+    height: 300,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  animatedContent: {
+    width: "100%",
+  },
+  transcriptionItem: {
+    marginBottom: 10,
+  },
+  speaker: {
+    color: "#4aaee7",
+    fontWeight: "bold",
+    marginBottom: 5,
+  },
+  wordsContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+  word: {
+    marginRight: 5,
+  },
+  highlightedWord: {
+    backgroundColor: "yellow",
+    fontWeight: "bold",
+  },
+  audioPlayerPlaceholder: {
+    width: width - 20,
+    height: 50,
+    backgroundColor: "#f0f0f0",
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 10,
   },
 });
